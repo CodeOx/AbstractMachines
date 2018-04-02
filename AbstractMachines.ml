@@ -2,7 +2,7 @@ exception Error
 exception Not_found
 
 type exp = Var of string
-| Lambda_x of exp
+| Lambda of exp*exp
 | Call of exp*exp
 | T
 | F
@@ -21,7 +21,7 @@ let rec lookup t x = match t with
 | (a,b) :: c -> if (a = x) then b else lookup c x
 
 (* Krivine machine *)
-type answerK = Unit
+type answerK = UnitK
 | BoolTK
 | BoolFK
 | IntK of int
@@ -29,9 +29,9 @@ type answerK = Unit
 
 let rec eval_call_by_name e = match e with
 | (t,Var a) -> eval_call_by_name (t,(lookup t (Var a)))
-| (t,Lambda_x a) -> VClosureK (t,a)
+| (t,Lambda (a,b)) -> VClosureK (t,Lambda (a,b))
 | (t, Call(a,b)) -> (match (eval_call_by_name (t,a)) with
-	| VClosureK (t1,e1) -> eval_call_by_name ((Var "x",b)::t1,e1)
+	| VClosureK (t1,Lambda (Var x,e1)) -> eval_call_by_name ((Var x,b)::t1,e1)
 	| _ -> raise Error
 	)
 | (_,T) -> BoolTK
@@ -72,7 +72,7 @@ let rec eval_call_by_name e = match e with
 	)
 
 (* 
-eg : let a = Call (Lambda_x (Add (Var "x",Const 1)), Const 2);;
+eg : let a = Call (Lambda (Add (Var "x",Const 1)), Const 2);;
 	 eval_call_by_name ([],a);;
 	 - : answerK = IntK 3
  *)
@@ -80,7 +80,7 @@ eg : let a = Call (Lambda_x (Add (Var "x",Const 1)), Const 2);;
 (* SECD machine *)
 type opcode = 
 | Ovar of string
-| Oclosure of (opcode list)
+| Oclosure of exp*(opcode list)
 | Oret
 | Oapply
 | Otrue
@@ -100,13 +100,13 @@ type answer = Unit
 | BoolF
 | Int of int
 | VClosure of ((exp * answer) list) * exp
-| Closure of ((exp * answer) list) * (opcode list)
+| Closure of exp * ((exp * answer) list) * (opcode list)
 
 let rec eval_call_by_value t e = match e with
 | Var a -> lookup t e
-| Lambda_x a -> VClosure (t,a)
+| Lambda (a,b) -> VClosure (t,Lambda (a,b))
 | Call (a,b) -> (match (eval_call_by_value t a) with
-	| VClosure (t1,e1) -> eval_call_by_value ((Var "x", eval_call_by_value t b)::t1) e1
+	| VClosure (t1,Lambda (Var x, e1)) -> eval_call_by_value ((Var x, eval_call_by_value t b)::t1) e1
 	| _ -> raise Error
 	)
 | T -> BoolT
@@ -148,7 +148,7 @@ let rec eval_call_by_value t e = match e with
 
 let rec compile e = match e with
 | Var a -> [Ovar a]
-| Lambda_x a -> [Oclosure ((compile a)@[Oret])]
+| Lambda (a,b) -> [Oclosure (a,((compile b)@[Oret]))]
 | Call (a,b) -> (compile a)@(compile b)@[Oapply]
 | T -> [Otrue]
 | F -> [Ofalse]
@@ -165,8 +165,8 @@ let rec compile e = match e with
 let rec execute s t c d = match (s,c) with
 | (s0::s1, []) -> s0
 | (_,(Ovar b)::c1) -> execute ((lookup t (Var b))::s) t c1 d
-| (_,(Oclosure b)::c1) -> execute ((Closure(t, b))::s) t c1 d
-| (s0::(Closure(t0,c0))::s1,(Oapply)::c1) -> execute [] ((Var "x",s0)::t0) c0 ((s1,t,c1)::d)
+| (_,(Oclosure (a,b))::c1) -> execute ((Closure(a, t, b))::s) t c1 d
+| (s0::(Closure(x0, t0,c0))::s1,(Oapply)::c1) -> execute [] ((x0,s0)::t0) c0 ((s1,t,c1)::d)
 | (s0::s2,(Oret)::c1) -> (match d with
 	| (s1,t1,c1)::d1 -> execute (s0::s1) t1 c1 d1
 	| _ -> raise Error
@@ -186,7 +186,7 @@ let rec execute s t c d = match (s,c) with
 | (_,_) -> raise Error
 
 (* 
-eg : let a = Call (Lambda_x (Add (Var "x",Const 1)), Const 2);;
+eg : let a = Call (Lambda (Var "x", Add (Var "x",Const 1)), Const 2);;
 	 eval_call_by_value [] a;;
 	 - : answer = Int 3
 

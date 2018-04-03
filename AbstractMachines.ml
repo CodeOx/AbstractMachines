@@ -23,8 +23,6 @@ type exp = Var of string
 | SeqDefs of exp*exp 				(* both exps to be defs *)
 | ParallelDefs of exp*exp 			(* both exps to be defs *)
 
-(* And,Or,Not,Defs *)
-
 let rec lookup t x = match t with
 | [] -> raise Not_found
 | (a,b) :: c -> if (a = x) then b else lookup c x
@@ -35,7 +33,7 @@ type answerK = UnitK
 | BoolFK
 | IntK of int
 | AListK of answerK list
-| TableExtensionK of exp*(answerK list)
+| TableExtensionK of (exp * exp) list
 | VClosureK of ((exp * exp) list) * exp
 
 let rec eval_call_by_name e = match e with
@@ -83,6 +81,22 @@ let rec eval_call_by_name e = match e with
 	| BoolTK -> eval_call_by_name (t,b)
 	| BoolFK -> eval_call_by_name (t,c)
 	| _ -> raise Error
+	)
+| (t, Let (e1,e2)) -> (match (eval_call_by_name (t,e1)) with
+	| TableExtensionK t1 -> eval_call_by_name ((t1@t), e2)
+	| _ -> raise Error
+	)
+| (t,Def (Var x,e2)) -> TableExtensionK [(Var x, e2)]
+| (t,SeqDefs (e1,e2)) -> (match (eval_call_by_name (t,e1)) with
+	| TableExtensionK t1 -> (match (eval_call_by_name ((t1@t),e2)) with
+		| TableExtensionK t2 -> TableExtensionK (t1@t2)
+		| _ -> raise Error
+		)
+	| _ -> raise Error
+	)
+| (t,ParallelDefs (e1,e2)) -> (match (eval_call_by_name (t,e1), eval_call_by_name (t,e2)) with
+	| (TableExtensionK t1, TableExtensionK t2) -> TableExtensionK (t1@t2)
+	| (_,_) -> raise Error
 	)
 | _ -> raise Error
 

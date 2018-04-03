@@ -116,6 +116,9 @@ type opcode =
 | Obind
 | Ounbind
 | Odef of exp
+| OseqDefs
+| OseqDefsEnd
+| OParallelDefs
 
 type answer = UnitA
 | BoolT
@@ -213,6 +216,8 @@ let rec compile e = match e with
 | IfThenElse (e1,e2,e3) -> (compile e1)@(compile e2)@compile(e3)@[OIfThenElse]
 | Let (e1,e2) -> (compile e1)@[Obind]@(compile e2)@[Ounbind]
 | Def (Var x, e2) -> (compile e2)@[Odef (Var x)]
+| SeqDefs (e1,e2) -> (compile e1)@[OseqDefs]@(compile e2)@[OseqDefsEnd]
+| ParallelDefs (e1,e2) -> (compile e1)@(compile e2)@[OParallelDefs]
 | _ -> raise Error
 
 let rec execute s t c d = match (s,c) with
@@ -245,7 +250,13 @@ let rec execute s t c d = match (s,c) with
 	| (s1,t1,c2)::d1 -> execute s t1 c1 d1
 	| _ -> raise Error
 	)
+| ((TableExtension t1)::s1, (OseqDefs)::c1) -> execute s (t1@t) c1 ((s,t,c1)::d)
+| ((TableExtension t2)::(TableExtension t1)::s1, (OseqDefsEnd)::c1) -> (match d with
+	| (s2,t3,c2)::d1 -> execute ((TableExtension (t1@t2))::s) t3 c1 d1
+	| _ -> raise Error
+	)
 | (a0::s1, (Odef (Var x))::c1) -> execute ((TableExtension [(Var x,a0)])::s1) t c1 d
+| ((TableExtension t1)::(TableExtension t2)::s1, (OParallelDefs)::c1) -> execute ((TableExtension (t1@t2))::s1) t c1 d
 | (_,_) -> raise Error
 
 (* 

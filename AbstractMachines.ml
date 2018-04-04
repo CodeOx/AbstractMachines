@@ -100,11 +100,64 @@ let rec eval_call_by_name e = match e with
 	)
 | _ -> raise Error
 
+type opcodeK = OClosK of ((exp * exp) list) * exp
+| OAddNextK of ((exp * exp) list) * exp
+| OAddCompleteK of ((exp * exp) list) * exp
+| OMulNextK of ((exp * exp) list) * exp
+| OMulCompleteK of ((exp * exp) list) * exp
+
+(* closure represented aa pair of table * expression *)
+type closure = Clos of ((exp * exp) list) * exp
+
+let rec executeK clos s = match clos with
+| Clos (t,Var x) -> executeK (Clos(t, lookup t (Var x))) s
+| Clos (t,Lambda (a,b)) -> (match s with
+	| (OClosK(t1,e1))::xs -> executeK (Clos((a,e1)::t,b)) xs
+	| _ -> raise Error
+	)
+| Clos (t,Call (a,b)) -> executeK (Clos (t,a)) ((OClosK (t,b))::s)
+| Clos (_,Unit) -> (match s with
+	| [] -> Clos ([], Unit)
+	| _ -> raise Error
+	)
+| Clos (_,T) -> (match s with
+	| [] -> Clos ([], T)
+	| _ -> raise Error
+	)
+| Clos (_,F) -> (match s with
+	| [] -> Clos ([], F)
+	| _ -> raise Error
+	)
+| Clos (t,Const a) -> (match s with
+	| [] -> Clos ([], Const a)
+	| (OAddNextK (t1,e1))::s1 -> executeK (Clos (t1,e1)) ((OAddCompleteK(t1,Const a))::s1)
+	| (OAddCompleteK (t2,Const a2))::s2 -> executeK (Clos (t2,Const (a+a2))) s2
+	| (OMulNextK (t1,e1))::s1 -> executeK (Clos (t1,e1)) ((OMulCompleteK(t1,Const a))::s1)
+	| (OMulCompleteK (t2,Const a2))::s2 -> executeK (Clos (t2,Const (a*a2))) s2
+	| _ -> raise Error
+	)
+| Clos (t,Add(a,b)) -> executeK (Clos (t,a)) ((OAddNextK(t,b))::s)
+| Clos (t,Mul(a,b)) -> executeK (Clos (t,a)) ((OMulNextK(t,b))::s)	
+| _ -> raise Error
+
 (* 
 eg : let a = Call (Lambda (Add (Var "x",Const 1)), Const 2);;
 	 eval_call_by_name ([],a);;
 	 - : answerK = IntK 3
+
+	 let a = Add(Const 1, Add(Const 2, Const 3));;
+	 executeK (Clos([],a)) [];;
+	 - : closure = Clos ([], Const 6)
  *)
+
+
+
+
+
+
+
+
+
 
 (* SECD machine *)
 type opcode = 

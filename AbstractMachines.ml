@@ -28,19 +28,23 @@ let rec lookup t x = match t with
 | (a,b) :: c -> if (a = x) then b else lookup c x
 
 (* Krivine machine *)
+type closureK = ClosK of ((exp * closureK) list) * exp
+
 type answerK = UnitK
 | BoolTK
 | BoolFK
 | IntK of int
 | AListK of answerK list
-| TableExtensionK of (exp * exp) list
-| VClosureK of ((exp * exp) list) * exp
+| TableExtensionK of (exp * closureK) list
+| VClosureK of ((exp * closureK) list) * exp
 
 let rec eval_call_by_name e = match e with
-| (t,Var a) -> eval_call_by_name (t,(lookup t (Var a)))
+| (t,Var a) -> (match (lookup t (Var a)) with
+	| ClosK(t1,b) -> eval_call_by_name (t1,b)
+	)
 | (t,Lambda (a,b)) -> VClosureK (t,Lambda (a,b))
 | (t, Call(a,b)) -> (match (eval_call_by_name (t,a)) with
-	| VClosureK (t1,Lambda (Var x,e1)) -> eval_call_by_name ((Var x,b)::t1,e1)
+	| VClosureK (t1,Lambda (Var x,e1)) -> eval_call_by_name ((Var x , ClosK(t,b))::t1,e1)
 	| _ -> raise Error
 	)
 | (_,Unit) -> UnitK
@@ -86,7 +90,7 @@ let rec eval_call_by_name e = match e with
 	| TableExtensionK t1 -> eval_call_by_name ((t1@t), e2)
 	| _ -> raise Error
 	)
-| (t,Def (Var x,e2)) -> TableExtensionK [(Var x, e2)]
+| (t,Def (Var x,e2)) -> TableExtensionK [(Var x, ClosK (t,e2))]
 | (t,SeqDefs (e1,e2)) -> (match (eval_call_by_name (t,e1)) with
 	| TableExtensionK t1 -> (match (eval_call_by_name ((t1@t),e2)) with
 		| TableExtensionK t2 -> TableExtensionK (t1@t2)
@@ -100,44 +104,94 @@ let rec eval_call_by_name e = match e with
 	)
 | _ -> raise Error
 
-type opcodeK = OClosK of ((exp * exp) list) * exp
-| OAddNextK of ((exp * exp) list) * exp
-| OAddCompleteK of ((exp * exp) list) * exp
-| OMulNextK of ((exp * exp) list) * exp
-| OMulCompleteK of ((exp * exp) list) * exp
+type opcodeK = OClosK of ((exp * closureK) list) * exp
 
-(* closure represented aa pair of table * expression *)
-type closure = Clos of ((exp * exp) list) * exp
+| OAddNextK of ((exp * closureK) list) * exp
+| OAddCompleteK of ((exp * closureK) list) * exp
+
+| OMulNextK of ((exp * closureK) list) * exp
+| OMulCompleteK of ((exp * closureK) list) * exp
+
+| OEqualNextK of ((exp * closureK) list) * exp
+| OEqualCompleteK of ((exp * closureK) list) * exp
+
+| OGrtNextK of ((exp * closureK) list) * exp
+| OGrtCompleteK of ((exp * closureK) list) * exp
+
+| OLstNextK of ((exp * closureK) list) * exp
+| OLstCompleteK of ((exp * closureK) list) * exp
+
+| OGreNextK of ((exp * closureK) list) * exp
+| OGreCompleteK of ((exp * closureK) list) * exp
+
+| OLteNextK of ((exp * closureK) list) * exp
+| OLteCompleteK of ((exp * closureK) list) * exp
+
+| OIfThenElseK of ((exp * closureK) list) * exp * exp
+
+| OTableExtensionK of (exp * closureK) list
+
 
 let rec executeK clos s = match clos with
-| Clos (t,Var x) -> executeK (Clos(t, lookup t (Var x))) s
-| Clos (t,Lambda (a,b)) -> (match s with
-	| (OClosK(t1,e1))::xs -> executeK (Clos((a,e1)::t,b)) xs
+| ClosK (t,Var x) -> executeK  (lookup t (Var x)) s
+| ClosK (t,Lambda (a,b)) -> (match s with
+	| (OClosK(t1,e1))::xs -> executeK (ClosK((a,ClosK(t1,e1))::t,b)) xs
 	| _ -> raise Error
 	)
-| Clos (t,Call (a,b)) -> executeK (Clos (t,a)) ((OClosK (t,b))::s)
-| Clos (_,Unit) -> (match s with
-	| [] -> Clos ([], Unit)
+| ClosK (t,Call (a,b)) -> executeK (ClosK (t,a)) ((OClosK (t,b))::s)
+| ClosK (_,Unit) -> (match s with
+	| [] -> ClosK ([], Unit)
 	| _ -> raise Error
 	)
-| Clos (_,T) -> (match s with
-	| [] -> Clos ([], T)
+| ClosK (_,T) -> (match s with
+	| [] -> ClosK ([], T)
+	| (OIfThenElseK (t1,e1,e2))::s1 -> executeK (ClosK (t1,e1)) s1
 	| _ -> raise Error
 	)
-| Clos (_,F) -> (match s with
-	| [] -> Clos ([], F)
+| ClosK (_,F) -> (match s with
+	| [] -> ClosK ([], F)
+	| (OIfThenElseK (t1,e1,e2))::s1 -> executeK (ClosK (t1,e2)) s1
 	| _ -> raise Error
 	)
-| Clos (t,Const a) -> (match s with
-	| [] -> Clos ([], Const a)
-	| (OAddNextK (t1,e1))::s1 -> executeK (Clos (t1,e1)) ((OAddCompleteK(t1,Const a))::s1)
-	| (OAddCompleteK (t2,Const a2))::s2 -> executeK (Clos (t2,Const (a+a2))) s2
-	| (OMulNextK (t1,e1))::s1 -> executeK (Clos (t1,e1)) ((OMulCompleteK(t1,Const a))::s1)
-	| (OMulCompleteK (t2,Const a2))::s2 -> executeK (Clos (t2,Const (a*a2))) s2
+| ClosK (t,Const a) -> (match s with
+	| [] -> ClosK ([], Const a)
+
+	| (OAddNextK (t1,e1))::s1 -> executeK (ClosK (t1,e1)) ((OAddCompleteK(t1,Const a))::s1)
+	| (OAddCompleteK (t2,Const a2))::s2 -> executeK (ClosK (t2,Const (a+a2))) s2
+
+	| (OMulNextK (t1,e1))::s1 -> executeK (ClosK (t1,e1)) ((OMulCompleteK(t1,Const a))::s1)
+	| (OMulCompleteK (t2,Const a2))::s2 -> executeK (ClosK (t2,Const (a*a2))) s2
+	
+	| (OEqualNextK (t1,e1))::s1 -> executeK (ClosK (t1,e1)) ((OEqualCompleteK(t1,Const a))::s1)
+	| (OEqualCompleteK (t2,Const a2))::s2 -> if (a = a2) then executeK (ClosK (t2,T)) s2 else executeK (ClosK (t2,F)) s2
+
+	| (OGrtNextK (t1,e1))::s1 -> executeK (ClosK (t1,e1)) ((OGrtCompleteK(t1,Const a))::s1)
+	| (OGrtCompleteK (t2,Const a2))::s2 -> if (a2 > a) then executeK (ClosK (t2,T)) s2 else executeK (ClosK (t2,F)) s2
+
+	| (OLstNextK (t1,e1))::s1 -> executeK (ClosK (t1,e1)) ((OLstCompleteK(t1,Const a))::s1)
+	| (OLstCompleteK (t2,Const a2))::s2 -> if (a2 < a) then executeK (ClosK (t2,T)) s2 else executeK (ClosK (t2,F)) s2
+
+	| (OGreNextK (t1,e1))::s1 -> executeK (ClosK (t1,e1)) ((OGreCompleteK(t1,Const a))::s1)
+	| (OGreCompleteK (t2,Const a2))::s2 -> if (a2 >= a) then executeK (ClosK (t2,T)) s2 else executeK (ClosK (t2,F)) s2
+
+	| (OLteNextK (t1,e1))::s1 -> executeK (ClosK (t1,e1)) ((OLteCompleteK(t1,Const a))::s1)
+	| (OLteCompleteK (t2,Const a2))::s2 -> if (a2 <= a) then executeK (ClosK (t2,T)) s2 else executeK (ClosK (t2,F)) s2
+	
 	| _ -> raise Error
 	)
-| Clos (t,Add(a,b)) -> executeK (Clos (t,a)) ((OAddNextK(t,b))::s)
-| Clos (t,Mul(a,b)) -> executeK (Clos (t,a)) ((OMulNextK(t,b))::s)	
+| ClosK (t,Add(a,b)) -> executeK (ClosK (t,a)) ((OAddNextK(t,b))::s)
+| ClosK (t,Mul(a,b)) -> executeK (ClosK (t,a)) ((OMulNextK(t,b))::s)
+| ClosK (t,Equal(a,b)) -> executeK (ClosK (t,a)) ((OEqualNextK(t,b))::s)
+| ClosK (t,Grt(a,b)) -> executeK (ClosK (t,a)) ((OGrtNextK(t,b))::s)
+| ClosK (t,Lst(a,b)) -> executeK (ClosK (t,a)) ((OLstNextK(t,b))::s)
+| ClosK (t,Gre(a,b)) -> executeK (ClosK (t,a)) ((OGreNextK(t,b))::s)	
+| ClosK (t,Lte(a,b)) -> executeK (ClosK (t,a)) ((OLteNextK(t,b))::s)
+| ClosK (t,IfThenElse (a,b,c)) -> executeK (ClosK (t,a)) ((OIfThenElseK(t,b,c))::s)
+| ClosK (t,Let(a,b)) -> executeK (ClosK (t,a)) ((OClosK (t,b))::s)
+| ClosK (t,Def (Var x, a)) -> (match s with
+	| (OClosK (t1,b))::s1 -> executeK (ClosK ((Var x,ClosK(t,a))::t1,b)) s1 
+	| _ -> raise Error
+	)
 | _ -> raise Error
 
 (* 
@@ -146,8 +200,8 @@ eg : let a = Call (Lambda (Add (Var "x",Const 1)), Const 2);;
 	 - : answerK = IntK 3
 
 	 let a = Add(Const 1, Add(Const 2, Const 3));;
-	 executeK (Clos([],a)) [];;
-	 - : closure = Clos ([], Const 6)
+	 executeK (ClosK([],a)) [];;
+	 - : closure = ClosK ([], Const 6)
  *)
 
 
@@ -336,4 +390,11 @@ eg : let a = Call (Lambda (Var "x", Add (Var "x",Const 1)), Const 2);;
   	 [Oclosure [Oint 1; Ovar "x"; Oadd; Oret]; Oint 2; Oapply]
 	 execute [] [] b [];;
 	 - : answer = Int 3
- *);;
+ *)
+
+(* 
+	let a = Let (Def (Var "x",Const 3), Call(Lambda (Var "y", Add (Var "y", Const 4)), Const 2));;
+	let b = Let (Def (Var "x",Const 3), Call(Lambda (Var "y", Add (Var "y", Const 4)), Add(Var "x", Const 2)));;
+	let c = Let (Def (Var "x",Const 3), Call(Lambda (Var "y", (Let (Def (Var "x",Const 10),Add (Var "y", Const 4)))), Add(Var "x", Const 2)));;
+ *)
+;;

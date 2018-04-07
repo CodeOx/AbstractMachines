@@ -127,9 +127,17 @@ type opcodeK = OClosK of ((exp * closureK) list) * exp
 | OLteNextK of ((exp * closureK) list) * exp
 | OLteCompleteK of ((exp * closureK) list) * exp
 
+| OTupK of ((exp * closureK) list) * (exp list)
+| OTupCompleteK of (exp list)
+
+
 | OIfThenElseK of ((exp * closureK) list) * exp * exp
 
 | OTableExtensionK of (exp * closureK) list
+
+| OSeqDefsK of ((exp * closureK) list) * exp
+
+| OParallelDefsK of ((exp * closureK) list) * exp
 
 
 let rec executeK clos s = match clos with
@@ -141,6 +149,11 @@ let rec executeK clos s = match clos with
 | ClosK (t,Call (a,b)) -> executeK (ClosK (t,a)) ((OClosK (t,b))::s)
 | ClosK (_,Unit) -> (match s with
 	| [] -> ClosK ([], Unit)
+	| (OTupK (t1, x::[]))::s1 -> executeK (ClosK (t1,x)) ((OTupCompleteK [Unit])::s1)
+	| (OTupK (t1, x::xs))::s1 -> executeK (ClosK (t1,x)) ((OTupCompleteK [Unit])::(OTupK (t1, xs))::s1)
+	| (OTupCompleteK l)::(OTupK (t1, x::[]))::s1 -> executeK (ClosK (t1,x)) ((OTupCompleteK (l@[Unit]))::s1)
+	| (OTupCompleteK l)::(OTupK (t1, x::xs))::s1 -> executeK (ClosK (t1,x)) ((OTupCompleteK (l@[Unit]))::(OTupK (t1, xs))::s1)
+	| (OTupCompleteK l)::[] -> ClosK ([],Tup (l@[Unit]))
 	| _ -> raise Error
 	)
 | ClosK (_,T) -> (match s with
@@ -187,30 +200,24 @@ let rec executeK clos s = match clos with
 | ClosK (t,Gre(a,b)) -> executeK (ClosK (t,a)) ((OGreNextK(t,b))::s)	
 | ClosK (t,Lte(a,b)) -> executeK (ClosK (t,a)) ((OLteNextK(t,b))::s)
 | ClosK (t,IfThenElse (a,b,c)) -> executeK (ClosK (t,a)) ((OIfThenElseK(t,b,c))::s)
+| ClosK (t,Tup l) -> (match (l,s) with
+	| ([],[]) -> clos
+	| (x::xs,_) -> executeK (ClosK (t,x)) ((OTupK (xs))::s) 
+	| (_,_) -> raise Error
+	)
 | ClosK (t,Let(a,b)) -> executeK (ClosK (t,a)) ((OClosK (t,b))::s)
 | ClosK (t,Def (Var x, a)) -> (match s with
-	| (OClosK (t1,b))::s1 -> executeK (ClosK ((Var x,ClosK(t,a))::t1,b)) s1 
+	| (OClosK (t1,b))::s1 -> executeK (ClosK ((Var x,ClosK(t,a))::t1,b)) s1
+	| (OSeqDefsK (t1,d2))::(OTableExtensionK (t2))::s1 -> executeK (ClosK ((Var x,ClosK(t,a))::t1,d2)) ((OTableExtensionK ((Var x,ClosK(t,a))::t2))::s1)
+	| (OSeqDefsK (t1,d2))::s1 -> executeK (ClosK ((Var x,ClosK(t,a))::t1,d2)) ((OTableExtensionK ([(Var x,ClosK(t,a))]))::s1)
+	| (OParallelDefsK (t1,d2))::(OTableExtensionK (t2))::s1 -> executeK (ClosK (t1,d2)) ((OTableExtensionK ((Var x,ClosK(t,a))::t2))::s1) 
+	| (OParallelDefsK (t1,d2))::s1 -> executeK (ClosK (t1,d2)) ((OTableExtensionK ([(Var x,ClosK(t,a))]))::s1)
+	| (OTableExtensionK (t1))::(OClosK (t2,b))::s1 -> executeK (ClosK ((Var x,ClosK(t,a))::(t1@t2),b)) s1
 	| _ -> raise Error
 	)
+| ClosK (t,SeqDefs (d1,d2)) -> executeK (ClosK (t,d1)) ((OSeqDefsK (t,d2))::s)
+| ClosK (t,ParallelDefs (d1,d2)) -> executeK (ClosK (t,d1)) ((OParallelDefsK (t,d2))::s)
 | _ -> raise Error
-
-(* 
-eg : let a = Call (Lambda (Add (Var "x",Const 1)), Const 2);;
-	 eval_call_by_name ([],a);;
-	 - : answerK = IntK 3
-
-	 let a = Add(Const 1, Add(Const 2, Const 3));;
-	 executeK (ClosK([],a)) [];;
-	 - : closure = ClosK ([], Const 6)
- *)
-
-
-
-
-
-
-
-
 
 
 (* SECD machine *)
@@ -373,7 +380,7 @@ let rec execute s t c d = match (s,c) with
 	)
 | ((TableExtension t1)::s1, (OseqDefs)::c1) -> execute s (t1@t) c1 ((s,t,c1)::d)
 | ((TableExtension t2)::(TableExtension t1)::s1, (OseqDefsEnd)::c1) -> (match d with
-	| (s2,t3,c2)::d1 -> execute ((TableExtension (t1@t2))::s) t3 c1 d1
+	| (s2,t3,c2)::d1 -> execute ((TableExtension (t1@t2))::s1) t3 c1 d1
 	| _ -> raise Error
 	)
 | (a0::s1, (Odef (Var x))::c1) -> execute ((TableExtension [(Var x,a0)])::s1) t c1 d
@@ -383,18 +390,22 @@ let rec execute s t c d = match (s,c) with
 (* 
 eg : let a = Call (Lambda (Var "x", Add (Var "x",Const 1)), Const 2);;
 	 eval_call_by_value [] a;;
-	 - : answer = Int 3
+	 execute [] [] (compile a) [];;
+	 eval_call_by_name ([],a);;
+	 executeK (ClosK ([],a)) [];;
 
-	 let b = compile a;;
-	 val b : opcode list =
-  	 [Oclosure [Oint 1; Ovar "x"; Oadd; Oret]; Oint 2; Oapply]
-	 execute [] [] b [];;
-	 - : answer = Int 3
  *)
 
-(* 
+(*
+	let a = Not (Grt (Const 6, Mod (Const 3, Const 2)));;
+	let a = Tup [Const 1; Tup [Const 2; Const 3]; Add (Const 10, Const 5)];;
+	let a = Proj (2, Tup [Const 1; Tup [Const 2; Const 3]; Mul (Const 10, Const 5)]);;
+
 	let a = Let (Def (Var "x",Const 3), Call(Lambda (Var "y", Add (Var "y", Const 4)), Const 2));;
-	let b = Let (Def (Var "x",Const 3), Call(Lambda (Var "y", Add (Var "y", Const 4)), Add(Var "x", Const 2)));;
-	let c = Let (Def (Var "x",Const 3), Call(Lambda (Var "y", (Let (Def (Var "x",Const 10),Add (Var "y", Const 4)))), Add(Var "x", Const 2)));;
+	let a = Let (Def (Var "x",Const 3), Call(Lambda (Var "y", Add (Var "y", Const 4)), Add(Var "x", Const 2)));;
+	let a = Let (Def (Var "x",Const 3), Call(Lambda (Var "y", (Let (Def (Var "x",Const 10),Add (Var "y", Const 4)))), Add(Var "x", Const 2)));;
+
+	let a = Let (ParallelDefs (Def (Var "y",Const 1), Def (Var "z",Const 2)), Add (Var "y",Var "z"))
+	let a = Let (ParallelDefs (Def (Var "y",Const 2), SeqDefs (Def (Var "z",Const 2), Def (Var "w",Add(Var "z", Const 3)))), Mul (Var "y",Var "w"))
  *)
 ;;

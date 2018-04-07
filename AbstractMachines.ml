@@ -1,4 +1,5 @@
 exception Error
+exception Error1
 exception Not_found
 
 type exp = Var of string
@@ -129,6 +130,7 @@ type opcodeK = OClosK of ((exp * closureK) list) * exp
 
 | OTupK of ((exp * closureK) list) * (exp list)
 | OTupCompleteK of (exp list)
+| OTupDoneK
 
 
 | OIfThenElseK of ((exp * closureK) list) * exp * exp
@@ -147,23 +149,33 @@ let rec executeK clos s = match clos with
 	| _ -> raise Error
 	)
 | ClosK (t,Call (a,b)) -> executeK (ClosK (t,a)) ((OClosK (t,b))::s)
-| ClosK (_,Unit) -> (match s with
+| ClosK (t,Unit) -> (match s with
 	| [] -> ClosK ([], Unit)
 	| (OTupK (t1, x::[]))::s1 -> executeK (ClosK (t1,x)) ((OTupCompleteK [Unit])::s1)
 	| (OTupK (t1, x::xs))::s1 -> executeK (ClosK (t1,x)) ((OTupCompleteK [Unit])::(OTupK (t1, xs))::s1)
 	| (OTupCompleteK l)::(OTupK (t1, x::[]))::s1 -> executeK (ClosK (t1,x)) ((OTupCompleteK (l@[Unit]))::s1)
 	| (OTupCompleteK l)::(OTupK (t1, x::xs))::s1 -> executeK (ClosK (t1,x)) ((OTupCompleteK (l@[Unit]))::(OTupK (t1, xs))::s1)
-	| (OTupCompleteK l)::[] -> ClosK ([],Tup (l@[Unit]))
+	| (OTupCompleteK l)::s1 -> executeK (ClosK (t,Tup (l@[Unit]))) (OTupDoneK::s1)
 	| _ -> raise Error
 	)
-| ClosK (_,T) -> (match s with
+| ClosK (t,T) -> (match s with
 	| [] -> ClosK ([], T)
 	| (OIfThenElseK (t1,e1,e2))::s1 -> executeK (ClosK (t1,e1)) s1
+	| (OTupK (t1, x::[]))::s1 -> executeK (ClosK (t1,x)) ((OTupCompleteK [T])::s1)
+	| (OTupK (t1, x::xs))::s1 -> executeK (ClosK (t1,x)) ((OTupCompleteK [T])::(OTupK (t1, xs))::s1)
+	| (OTupCompleteK l)::(OTupK (t1, x::[]))::s1 -> executeK (ClosK (t1,x)) ((OTupCompleteK (l@[T]))::s1)
+	| (OTupCompleteK l)::(OTupK (t1, x::xs))::s1 -> executeK (ClosK (t1,x)) ((OTupCompleteK (l@[T]))::(OTupK (t1, xs))::s1)
+	| (OTupCompleteK l)::s1 -> executeK (ClosK (t,Tup (l@[T]))) (OTupDoneK::s1)
 	| _ -> raise Error
 	)
-| ClosK (_,F) -> (match s with
+| ClosK (t,F) -> (match s with
 	| [] -> ClosK ([], F)
 	| (OIfThenElseK (t1,e1,e2))::s1 -> executeK (ClosK (t1,e2)) s1
+	| (OTupK (t1, x::[]))::s1 -> executeK (ClosK (t1,x)) ((OTupCompleteK [F])::s1)
+	| (OTupK (t1, x::xs))::s1 -> executeK (ClosK (t1,x)) ((OTupCompleteK [F])::(OTupK (t1, xs))::s1)
+	| (OTupCompleteK l)::(OTupK (t1, x::[]))::s1 -> executeK (ClosK (t1,x)) ((OTupCompleteK (l@[F]))::s1)
+	| (OTupCompleteK l)::(OTupK (t1, x::xs))::s1 -> executeK (ClosK (t1,x)) ((OTupCompleteK (l@[F]))::(OTupK (t1, xs))::s1)
+	| (OTupCompleteK l)::s1 -> executeK (ClosK (t,Tup (l@[F]))) (OTupDoneK::s1)
 	| _ -> raise Error
 	)
 | ClosK (t,Const a) -> (match s with
@@ -189,6 +201,12 @@ let rec executeK clos s = match clos with
 
 	| (OLteNextK (t1,e1))::s1 -> executeK (ClosK (t1,e1)) ((OLteCompleteK(t1,Const a))::s1)
 	| (OLteCompleteK (t2,Const a2))::s2 -> if (a2 <= a) then executeK (ClosK (t2,T)) s2 else executeK (ClosK (t2,F)) s2
+
+	| (OTupK (t1, x::[]))::s1 -> executeK (ClosK (t1,x)) ((OTupCompleteK [Const a])::s1)
+	| (OTupK (t1, x::xs))::s1 -> executeK (ClosK (t1,x)) ((OTupCompleteK [Const a])::(OTupK (t1, xs))::s1)
+	| (OTupCompleteK l)::(OTupK (t1, x::[]))::s1 -> executeK (ClosK (t1,x)) ((OTupCompleteK (l@[Const a]))::s1)
+	| (OTupCompleteK l)::(OTupK (t1, x::xs))::s1 -> executeK (ClosK (t1,x)) ((OTupCompleteK (l@[Const a]))::(OTupK (t1, xs))::s1)
+	| (OTupCompleteK l)::s1 -> executeK (ClosK (t,Tup (l@[Const a]))) (OTupDoneK::s1)
 	
 	| _ -> raise Error
 	)
@@ -201,9 +219,18 @@ let rec executeK clos s = match clos with
 | ClosK (t,Lte(a,b)) -> executeK (ClosK (t,a)) ((OLteNextK(t,b))::s)
 | ClosK (t,IfThenElse (a,b,c)) -> executeK (ClosK (t,a)) ((OIfThenElseK(t,b,c))::s)
 | ClosK (t,Tup l) -> (match (l,s) with
+	| (_, (OTupDoneK)::(OTupK (t1, x::[]))::s1) -> executeK (ClosK (t1,x)) ((OTupCompleteK [Tup l])::s1)
+	| (_, (OTupDoneK)::(OTupK (t1, x::xs))::s1) -> executeK (ClosK (t1,x)) ((OTupCompleteK [Tup l])::(OTupK (t1, xs))::s1)
+	| (_, (OTupDoneK)::(OTupCompleteK l1)::(OTupK (t1, x::[]))::s1) -> executeK (ClosK (t1,x)) ((OTupCompleteK (l1@[Tup l]))::s1)
+	| (_, (OTupDoneK)::(OTupCompleteK l1)::(OTupK (t1, x::xs))::s1) -> executeK (ClosK (t1,x)) ((OTupCompleteK (l1@[Tup l]))::(OTupK (t1, xs))::s1)
+	| (_, (OTupDoneK)::(OTupCompleteK l1)::[]) -> ClosK ([],Tup (l1@[Tup l]))
+	| (_, (OTupDoneK)::[]) -> ClosK ([],Tup l)
+
 	| ([],[]) -> clos
-	| (x::xs,_) -> executeK (ClosK (t,x)) ((OTupK (xs))::s) 
-	| (_,_) -> raise Error
+	| (x::[],s1) -> executeK (ClosK (t,x)) ((OTupCompleteK [])::s1)
+	| (x::xs,s1) -> executeK (ClosK (t,x)) ((OTupK (t,xs))::s1) 
+	
+	| (_,_) -> raise Error1
 	)
 | ClosK (t,Let(a,b)) -> executeK (ClosK (t,a)) ((OClosK (t,b))::s)
 | ClosK (t,Def (Var x, a)) -> (match s with
@@ -398,8 +425,8 @@ eg : let a = Call (Lambda (Var "x", Add (Var "x",Const 1)), Const 2);;
 
 (*
 	let a = Not (Grt (Const 6, Mod (Const 3, Const 2)));;
+	let a = Tup [Const 1; Const 1; Add (Const 10, Const 5)];;
 	let a = Tup [Const 1; Tup [Const 2; Const 3]; Add (Const 10, Const 5)];;
-	let a = Proj (2, Tup [Const 1; Tup [Const 2; Const 3]; Mul (Const 10, Const 5)]);;
 
 	let a = Let (Def (Var "x",Const 3), Call(Lambda (Var "y", Add (Var "y", Const 4)), Const 2));;
 	let a = Let (Def (Var "x",Const 3), Call(Lambda (Var "y", Add (Var "y", Const 4)), Add(Var "x", Const 2)));;
